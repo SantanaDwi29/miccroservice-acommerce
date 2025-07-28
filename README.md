@@ -53,3 +53,10 @@ Follow these steps to run the project locally.
 ```bash
 git clone [REPOSITORY_URL]
 cd [REPOSITORY_FOLDER_NAME]
+
+### 3. Database Set Up
+A. Crerate  Database
+   CREATE DATABASE user_db;
+   CREATE DATABASE customer_db;
+   CREATE DATABASE product_db;
+   CREATE DATABASE transaction_db;
