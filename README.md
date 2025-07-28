@@ -1,55 +1,55 @@
-# Aplikasi E-Commerce Berbasis Microservice
+# Microservice-Based E-Commerce Application
 
-Ini adalah proyek backend untuk aplikasi e-commerce yang dibangun menggunakan arsitektur microservice. Proyek ini bertujuan untuk mendemonstrasikan bagaimana beberapa layanan independen dapat bekerja sama di belakang sebuah API Gateway.
+This is a simple backend project for an e-commerce application built using a microservice architecture. This project aims to demonstrate how several independent services can work together behind an API Gateway.
 
-Setiap layanan memiliki database-nya sendiri dan berkomunikasi satu sama lain melalui panggilan API (HTTP).
+Each service has its own database and communicates with others via API (HTTP) calls.
 
 ---
-## 🏛️ Arsitektur
+## 🏛️ Architecture
 
-Aplikasi ini terdiri dari beberapa komponen:
+This application consists of several components:
 
 1.  **API Gateway** (`Port 3000`)
-    * Bertindak sebagai satu-satunya titik masuk (*single entry point*) untuk semua permintaan dari klien.
-    * Meneruskan permintaan ke layanan yang sesuai.
-    * Dapat menangani otentikasi, *rate limiting*, dan logging.
+    * Acts as the single entry point for all requests from the client.
+    * Forwards requests to the appropriate service.
+    * Can handle authentication, rate limiting, and logging.
 
 2.  **User Service** (`Port 3001`)
-    * Bertanggung jawab untuk registrasi dan login pengguna.
-    * Mengelola data kredensial pengguna.
+    * Responsible for user registration and login.
+    * Manages user credential data.
 
 3.  **Customer Service** (`Port 3002`)
-    * Bertanggung jawab untuk mengelola profil data pelanggan (CRUD).
+    * Responsible for managing customer profile data (CRUD).
 
 4.  **Product Service** (`Port 3003`)
-    * Bertanggung jawab untuk mengelola data produk, termasuk stok dan harga (CRUD).
+    * Responsible for managing product data, including stock and price (CRUD).
 
 5.  **Transaction Service** (`Port 3004`)
-    * Meng-orkestrasi proses transaksi dengan berkomunikasi dengan *Customer Service* dan *Product Service*.
+    * Orchestrates the transaction process by communicating with the Customer Service and Product Service.
 
 ---
-## 💻 Teknologi yang Digunakan
+## 💻 Tech Stack
 
-* **Node.js**: Lingkungan eksekusi JavaScript.
-* **Express.js**: Kerangka kerja web untuk membangun API.
-* **MySQL**: Sistem manajemen database relasional.
-* **mysql2**: Driver MySQL untuk Node.js.
-* **Axios**: Klien HTTP untuk komunikasi antar-service.
-* **Dotenv**: Untuk mengelola variabel lingkungan (`.env`).
-* **jsonwebtoken & bcrypt**: Untuk otentikasi (di User Service).
+* **Node.js**: JavaScript runtime environment.
+* **Express.js**: Web framework for building APIs.
+* **MySQL**: Relational database management system.
+* **mysql2**: MySQL driver for Node.js.
+* **Axios**: HTTP client for inter-service communication.
+* **Dotenv**: For managing environment variables (`.env`).
+* **jsonwebtoken & bcrypt**: For authentication (in User Service).
 
 ---
-## 🚀 Instalasi dan Konfigurasi
+## 🚀 Installation and Setup
 
-Ikuti langkah-langkah ini untuk menjalankan proyek secara lokal.
+Follow these steps to run the project locally.
 
-### 1. Prasyarat
+### 1. Prerequisites
 
-* [Node.js](https://nodejs.org/) (disarankan versi 18 atau lebih baru)
-* Server MySQL (misalnya dari XAMPP, Laragon).
+* [Node.js](https://nodejs.org/) (v18 or newer recommended)
+* A MySQL Server (e.g., from XAMPP, Laragon, or a standalone installation).
 
-### 2. Clone Repository
+### 2. Clone the Repository
 
 ```bash
-git clone [URL_REPOSITORY]
-cd [NAMA_FOLDER_REPOSITORY]
+git clone [REPOSITORY_URL]
+cd [REPOSITORY_FOLDER_NAME]
