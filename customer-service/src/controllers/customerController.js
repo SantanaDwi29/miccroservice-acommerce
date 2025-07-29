@@ -1,43 +1,38 @@
 const CustomerModel = require("../models/customerModel");
-const axios = require("axios"); // Tambahkan ini
+const axios = require("axios"); // Pastikan axios sudah diinstal: npm install axios
+
 const CustomerController = {
+
   createCustomer: async (req, res) => {
     const { userId, name, email, phone, address } = req.body;
+
     if (!userId || !name || !email) {
       return res
         .status(400)
         .json({ message: "User ID, name, and email are required" });
     }
+
     try {
-      // Panggil User Service untuk memvalidasi userId
-      const userResponse = await axios.get(
-        `${process.env.USER_SERVICE_URL}/api/users/${userId}`
-      );
-      if (userResponse.status !== 200 || !userResponse.data) {
-        return res
-          .status(404)
-          .json({ message: "User not found in User Service" });
-      }
-      const customerId = await CustomerModel.create(
-        userId,
-        name,
-        email,
-        phone,
-        address
-      );
-      res
-        .status(201)
-        .json({ message: "Customer created successfully", customerId });
+      const userVerificationUrl = `${process.env.USER_SERVICE_URL}/api/users/${userId}`;
+      console.log(`[CustomerService] Attempting to verify user ID ${userId} from user-service: ${userVerificationUrl}`);
+
+   
+      await axios.get(userVerificationUrl);
+
+      const customerId = await CustomerModel.create(userId, name, email, phone, address);
+      res.status(201).json({ message: "Customer created successfully", customerId });
     } catch (error) {
+      if (axios.isAxiosError(error) && error.response && error.response.status === 404) {
+        return res.status(404).json({ message: "User not found in User Service" });
+      }
       console.error(
         "Error creating customer:",
         error.response ? error.response.data : error.message
       );
-      res
-        .status(500)
-        .json({ message: "Error creating customer", error: error.message });
+      res.status(500).json({ message: "Error creating customer", error: error.message });
     }
   },
+
 
   getCustomerById: async (req, res) => {
     const { id } = req.params;
@@ -46,9 +41,36 @@ const CustomerController = {
       if (!customer) {
         return res.status(404).json({ message: "Customer not found" });
       }
-      res.status(200).json(customer);
+
+      let userInfo = {};
+      if (customer.user_id) {
+        try {
+          const userLookupUrl = `${process.env.USER_SERVICE_URL}/api/users/${customer.user_id}`;
+          console.log(`[CustomerService] Attempting to fetch user info for customer ${customer.id} (user_id: ${customer.user_id}) from user-service: ${userLookupUrl}`);
+
+          const userResponse = await axios.get(userLookupUrl);
+          delete userResponse.data.password;
+          userInfo = userResponse.data;
+        } catch (userError) {
+          console.error(`Could not fetch user info for user_id: ${customer.user_id}: ${userError.message}`);
+        }
+      }
+
+      const result = {
+        customer_id: customer.id,
+        user_id: customer.user_id, 
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        address: customer.address,
+        created_at: customer.created_at,
+        user_info: userInfo, 
+      };
+
+      res.status(200).json(result);
+
     } catch (error) {
-      console.error("Error getting customer by ID:", error);
+      console.error("Error getting customer by ID:", error.response ? error.response.data : error.message);
       res.status(500).json({ message: "Error getting customer" });
     }
   },
@@ -62,10 +84,66 @@ const CustomerController = {
           .status(404)
           .json({ message: "Customer not found for this user ID" });
       }
-      res.status(200).json(customer);
+
+      let userInfo = {};
+      if (customer.user_id) {
+        try {
+          const userLookupUrl = `${process.env.USER_SERVICE_URL}/api/users/${customer.user_id}`;
+          console.log(`[CustomerService] Attempting to fetch user info for user_id ${customer.user_id} from user-service: ${userLookupUrl}`);
+
+          const userResponse = await axios.get(userLookupUrl);
+          delete userResponse.data.password;
+          userInfo = userResponse.data;
+        } catch (userError) {
+          console.error(`Could not fetch user info for user_id: ${customer.user_id}: ${userError.message}`);
+        }
+      }
+      const responseWithUserInfo = { ...customer, user_info: userInfo };
+      res.status(200).json(responseWithUserInfo);
+
     } catch (error) {
       console.error("Error getting customer by user ID:", error);
       res.status(500).json({ message: "Error getting customer" });
+    }
+  },
+
+
+  getAllCustomers: async (req, res) => {
+    try {
+      const customers = await CustomerModel.getAll();
+
+      const responseData = await Promise.all(
+        customers.map(async (customer) => {
+          let userInfo = {};
+          if (customer.user_id) {
+            try {
+              const userLookupUrl = `${process.env.USER_SERVICE_URL}/api/users/${customer.user_id}`;
+              console.log(`[CustomerService] Attempting to fetch user info for customer ${customer.id} (user_id: ${customer.user_id}) from user-service: ${userLookupUrl}`);
+
+              const userResponse = await axios.get(userLookupUrl);
+              delete userResponse.data.password; 
+              userInfo = userResponse.data;
+            } catch (e) {
+              console.error(`Could not fetch user info for user_id: ${customer.user_id}: ${e.message}`);
+            }
+          }
+          return {
+            id: customer.id,
+            user_info: userInfo,
+            name: customer.name,
+            email: customer.email,
+            phone: customer.phone,
+            address: customer.address,
+            created_at: customer.created_at,
+             
+          };
+        })
+      );
+
+      res.status(200).json(responseData);
+    } catch (error) {
+      console.error("Error getting all customers:", error);
+      res.status(500).json({ message: "Error getting all customers" });
     }
   },
 
@@ -92,6 +170,7 @@ const CustomerController = {
     }
   },
 
+  
   deleteCustomer: async (req, res) => {
     const { id } = req.params;
     try {
@@ -105,14 +184,6 @@ const CustomerController = {
       res.status(500).json({ message: "Error deleting customer" });
     }
   },
-  getAllCustomers: async (req, res) => {
-    try {
-      const customers = await CustomerModel.getAll();
-      res.status(200).json(customers);
-    } catch (error) {
-      console.error("Error getting all customers:", error);
-      res.status(500).json({ message: "Error getting all customers" });
-    }
-  },
 };
+
 module.exports = CustomerController;
