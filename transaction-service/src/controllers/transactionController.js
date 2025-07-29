@@ -1,6 +1,6 @@
 const TransactionModel = require("../models/transactionModel");
 const axios = require("axios");
-const pool = require("../config/db"); 
+const pool = require("../config/db");
 
 const TransactionController = {
 
@@ -19,13 +19,18 @@ const TransactionController = {
 
       // 1. Validasi Customer via API call
       try {
+        console.log(`[TransactionService] Validating customer ${customerId} from: ${process.env.CUSTOMER_SERVICE_URL}/api/customers/${customerId}`);
         await axios.get(
           `${process.env.CUSTOMER_SERVICE_URL}/api/customers/${customerId}`
         );
       } catch (error) {
         await connection.rollback();
+        console.error(
+          "Error validating customer:",
+          axios.isAxiosError(error) ? error.response?.data || error.message : error.message
+        );
         return res
-          .status(404)
+          .status(404) // Use 404 specifically if customer not found
           .json({ message: "Customer not found in Customer Service" });
       }
 
@@ -33,23 +38,33 @@ const TransactionController = {
       let totalAmount = 0;
       const validatedItems = [];
       for (const item of items) {
-        const productResponse = await axios.get(
-          `${process.env.PRODUCT_SERVICE_URL}/api/products/${item.productId}`
-        );
-        const product = productResponse.data;
-        if (product.stock < item.quantity) {
+        try {
+          console.log(`[TransactionService] Validating product ${item.productId} stock from: ${process.env.PRODUCT_SERVICE_URL}/api/products/${item.productId}`);
+          const productResponse = await axios.get(
+            `${process.env.PRODUCT_SERVICE_URL}/api/products/${item.productId}`
+          );
+          const product = productResponse.data;
+          if (product.stock < item.quantity) {
+            await connection.rollback();
+            return res
+              .status(400)
+              .json({ message: `Not enough stock for product ${product.name}. Available: ${product.stock}, Requested: ${item.quantity}` });
+          }
+          totalAmount += product.price * item.quantity;
+          validatedItems.push({
+            productId: product.id,
+            quantity: item.quantity,
+            pricePerItem: product.price,
+            stockBefore: product.stock, // Keep original stock for update calculation
+          });
+        } catch (productError) {
           await connection.rollback();
-          return res
-            .status(400)
-            .json({ message: `Not enough stock for product ${product.name}` });
+          console.error(
+            `Error validating product ${item.productId}:`,
+            axios.isAxiosError(productError) ? productError.response?.data || productError.message : productError.message
+          );
+          return res.status(404).json({ message: `Product ${item.productId} not found or inaccessible in Product Service` });
         }
-        totalAmount += product.price * item.quantity;
-        validatedItems.push({
-          productId: product.id,
-          quantity: item.quantity,
-          pricePerItem: product.price,
-          stockBefore: product.stock,
-        });
       }
 
       // 3. Simpan transaksi utama ke DB lokal
@@ -68,12 +83,16 @@ const TransactionController = {
       }
 
       // 5. Kurangi stok produk melalui API call
-      for (const item of validatedItems) {
+      // Use Promise.all to update stocks concurrently for performance
+      await Promise.all(validatedItems.map(async (item) => {
+        const updateStockUrl = `${process.env.PRODUCT_SERVICE_URL}/api/products/${item.productId}`;
+        const newStock = item.stockBefore - item.quantity;
+        console.log(`[TransactionService] Updating stock for product ${item.productId} to ${newStock} via: ${updateStockUrl}`);
         await axios.put(
-          `${process.env.PRODUCT_SERVICE_URL}/api/products/${item.productId}`,
-          { stock: item.stockBefore - item.quantity }
+          updateStockUrl,
+          { stock: newStock }
         );
-      }
+      }));
 
       await connection.commit();
       res
@@ -83,7 +102,7 @@ const TransactionController = {
       await connection.rollback();
       console.error(
         "Error creating transaction:",
-        error.response ? error.response.data : error.message
+        axios.isAxiosError(error) ? error.response?.data || error.message : error.message
       );
       res.status(500).json({
         message: "Error creating transaction, transaction rolled back",
@@ -95,40 +114,59 @@ const TransactionController = {
   },
 
   enrichItemsWithProductDetails: async (items) => {
-    return Promise.all(
+    const productCache = new Map();
+    const enrichedItems = await Promise.all(
       items.map(async (item) => {
+        if (productCache.has(item.product_id)) {
+          return { ...item, product_name: productCache.get(item.product_id) };
+        }
+
         try {
           const productResponse = await axios.get(
             `${process.env.PRODUCT_SERVICE_URL}/api/products/${item.product_id}`
           );
-          return { ...item, product_name: productResponse.data.name };
+          const productName = productResponse.data.name;
+          productCache.set(item.product_id, productName);
+          return { ...item, product_name: productName };
         } catch (e) {
+          console.error(`Could not fetch product info for product_id: ${item.product_id}: ${e.message}`);
+          productCache.set(item.product_id, "Product Not Found"); 
           return { ...item, product_name: "Product Not Found" };
         }
       })
     );
+    return enrichedItems;
   },
+
 
   getTransactionById: async (req, res) => {
     try {
       const { id } = req.params;
-      const transactionItems = await TransactionModel.findById(id);
-      if (transactionItems.length === 0) {
+
+      const rawTransactionItems = await TransactionModel.findById(id);
+
+      if (rawTransactionItems.length === 0) {
         return res.status(404).json({ message: "Transaction not found" });
       }
 
       const enrichedItems =
         await TransactionController.enrichItemsWithProductDetails(
-          transactionItems
+          rawTransactionItems
         );
 
       const transaction = {
-        id: transactionItems[0].id,
-        customer_id: transactionItems[0].customer_id,
-        total_amount: transactionItems[0].total_amount,
-        status: transactionItems[0].status,
-        transaction_date: transactionItems[0].transaction_date,
-        items: enrichedItems,
+        id: rawTransactionItems[0].id,
+        customer_id: rawTransactionItems[0].customer_id,
+        total_amount: rawTransactionItems[0].total_amount,
+        status: rawTransactionItems[0].status,
+        transaction_date: rawTransactionItems[0].transaction_date,
+        items: enrichedItems.map(item => ({ 
+          item_id: item.item_id,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          quantity: item.quantity,
+          price_per_item: item.price_per_item,
+        })),
       };
 
       res.status(200).json(transaction);
@@ -138,32 +176,41 @@ const TransactionController = {
     }
   },
 
+  
   getTransactionsByCustomerId: async (req, res) => {
     try {
       const { customerId } = req.params;
-      const allItems = await TransactionModel.findByCustomerId(customerId);
-      if (allItems.length === 0) {
+      const rawAllItems = await TransactionModel.findByCustomerId(customerId);
+      if (rawAllItems.length === 0) {
         return res
-          .status(404)
+          .status(404) 
           .json({ message: "No transactions found for this customer" });
       }
 
+   
       const enrichedItems =
-        await TransactionController.enrichItemsWithProductDetails(allItems);
+        await TransactionController.enrichItemsWithProductDetails(rawAllItems);
 
       const transactionsMap = new Map();
       enrichedItems.forEach((item) => {
-        if (!transactionsMap.has(item.id)) {
+        if (!transactionsMap.has(item.id)) { 
           transactionsMap.set(item.id, {
             id: item.id,
             customer_id: item.customer_id,
             total_amount: item.total_amount,
             status: item.status,
             transaction_date: item.transaction_date,
-            items: [],
+            items: [], 
           });
         }
-        transactionsMap.get(item.id).items.push(item);
+     
+        transactionsMap.get(item.id).items.push({
+          item_id: item.item_id,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          quantity: item.quantity,
+          price_per_item: item.price_per_item,
+        });
       });
 
       res.status(200).json(Array.from(transactionsMap.values()));
@@ -173,15 +220,18 @@ const TransactionController = {
     }
   },
 
- getAllTransactions: async (req, res) => {
+
+  getAllTransactions: async (req, res) => {
     try {
-      const transactionItems = await TransactionModel.getAll();
-      if (transactionItems.length === 0) {
-        return res.status(200).json([]); // No transactions found
+      const rawTransactionItems = await TransactionModel.getAll();
+      if (rawTransactionItems.length === 0) {
+        return res.status(200).json([])
       }
-      
+
+      const enrichedItems = await TransactionController.enrichItemsWithProductDetails(rawTransactionItems);
+
       const transactionsMap = new Map();
-      transactionItems.forEach((item) => {
+      enrichedItems.forEach((item) => {
         if (!transactionsMap.has(item.id)) {
           transactionsMap.set(item.id, {
             id: item.id,
@@ -207,11 +257,12 @@ const TransactionController = {
     }
   },
 
+
   updateTransactionStatus: async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     if (!status || !["pending", "completed", "cancelled"].includes(status)) {
-      return res.status(400).json({ message: "Invalid status provided" });
+      return res.status(400).json({ message: "Invalid status provided. Must be 'pending', 'completed', or 'cancelled'." });
     }
     try {
       const affectedRows = await TransactionModel.updateStatus(id, status);
@@ -228,6 +279,7 @@ const TransactionController = {
       res.status(500).json({ message: "Error updating transaction status" });
     }
   },
+
 
   deleteTransaction: async (req, res) => {
     const { id } = req.params;
